@@ -45,6 +45,7 @@ describe("configureTestPlanTools", () => {
     mockWitApi = {
       createWorkItem: jest.fn(),
       updateWorkItem: jest.fn(),
+      getWorkItemsBatch: jest.fn(),
     } as unknown as IWorkItemTrackingApi;
     mockTestApi = {
       addTestCasesToSuite: jest.fn(),
@@ -73,8 +74,179 @@ describe("configureTestPlanTools", () => {
           "testplan_list_test_cases",
           "testplan_show_test_results_from_build_id",
           "testplan_list_test_suites",
+          "testplan_list_test_case_steps_by_batch",
         ])
       );
+    });
+  });
+
+  describe("list_test_case_steps_by_batch tool", () => {
+    it("should batch load work item details using workItem.id from suite test cases", async () => {
+      configureTestPlanTools(server, tokenProvider, connectionProvider);
+      const call = (server.tool as jest.Mock).mock.calls.find(([toolName]) => toolName === "testplan_list_test_case_steps_by_batch");
+      if (!call) throw new Error("testplan_list_test_case_steps_by_batch tool not registered");
+      const [, , , handler] = call;
+
+      (mockTestPlanApi.getTestCaseList as jest.Mock)
+        .mockResolvedValueOnce([
+          {
+            workItem: {
+              id: 101,
+              workItemFields: [{ "System.Id": 9999 }],
+            },
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            workItem: {
+              id: 202,
+            },
+          },
+          {
+            workItem: {
+              id: 101,
+            },
+          },
+        ]);
+      (mockWitApi.getWorkItemsBatch as jest.Mock).mockResolvedValue([
+        {
+          id: 101,
+          rev: 1,
+          fields: {
+            "System.Id": 101,
+            "System.Title": "Login test",
+            "Microsoft.VSTS.TCM.Steps": "<steps />",
+            "System.State": "Design",
+          },
+        },
+        {
+          id: 202,
+          rev: 1,
+          fields: {
+            "System.Id": 202,
+            "System.Title": "Checkout test",
+            "Microsoft.VSTS.TCM.Steps": "<steps />",
+            "System.State": "Active",
+          },
+        },
+      ]);
+
+      const result = await handler({
+        project: "proj1",
+        planId: 55,
+        suiteIds: [10, 20],
+      });
+
+      expect(mockTestPlanApi.getTestCaseList).toHaveBeenNthCalledWith(1, "proj1", 55, 10);
+      expect(mockTestPlanApi.getTestCaseList).toHaveBeenNthCalledWith(2, "proj1", 55, 20);
+      expect(mockWitApi.getWorkItemsBatch).toHaveBeenCalledWith(
+        {
+          ids: [101, 202],
+          fields: ["System.Id", "System.Title", "Microsoft.VSTS.TCM.Steps"],
+        },
+        "proj1"
+      );
+      expect(result.content[0].text).toBe(
+        JSON.stringify(
+          [
+            {
+              id: 101,
+              fields: {
+                "System.Title": "Login test",
+                "Microsoft.VSTS.TCM.Steps": "<steps />",
+              },
+            },
+            {
+              id: 202,
+              fields: {
+                "System.Title": "Checkout test",
+                "Microsoft.VSTS.TCM.Steps": "<steps />",
+              },
+            },
+          ],
+          null,
+          2
+        )
+      );
+    });
+
+    it("should return only explicitly requested fields", async () => {
+      configureTestPlanTools(server, tokenProvider, connectionProvider);
+      const call = (server.tool as jest.Mock).mock.calls.find(([toolName]) => toolName === "testplan_list_test_case_steps_by_batch");
+      if (!call) throw new Error("testplan_list_test_case_steps_by_batch tool not registered");
+      const [, , , handler] = call;
+
+      (mockTestPlanApi.getTestCaseList as jest.Mock).mockResolvedValue([
+        {
+          workItem: {
+            id: 303,
+          },
+        },
+      ]);
+      (mockWitApi.getWorkItemsBatch as jest.Mock).mockResolvedValue([
+        {
+          id: 303,
+          fields: {
+            "System.Id": 303,
+            "System.Title": "Filtered test",
+            "System.State": "Closed",
+            "Microsoft.VSTS.TCM.Steps": "<steps />",
+          },
+        },
+      ]);
+
+      const result = await handler({
+        project: "proj1",
+        planId: 55,
+        suiteIds: [10],
+        fields: ["System.State"],
+      });
+
+      expect(mockWitApi.getWorkItemsBatch).toHaveBeenCalledWith(
+        {
+          ids: [303],
+          fields: ["System.Id", "System.State"],
+        },
+        "proj1"
+      );
+      expect(result.content[0].text).toBe(
+        JSON.stringify(
+          [
+            {
+              id: 303,
+              fields: {
+                "System.State": "Closed",
+              },
+            },
+          ],
+          null,
+          2
+        )
+      );
+    });
+
+    it("should return an empty array when no work item ids can be extracted", async () => {
+      configureTestPlanTools(server, tokenProvider, connectionProvider);
+      const call = (server.tool as jest.Mock).mock.calls.find(([toolName]) => toolName === "testplan_list_test_case_steps_by_batch");
+      if (!call) throw new Error("testplan_list_test_case_steps_by_batch tool not registered");
+      const [, , , handler] = call;
+
+      (mockTestPlanApi.getTestCaseList as jest.Mock).mockResolvedValue([
+        {
+          workItem: {
+            workItemFields: [{ Name: "Missing id" }],
+          },
+        },
+      ]);
+
+      const result = await handler({
+        project: "proj1",
+        planId: 55,
+        suiteIds: [10],
+      });
+
+      expect(mockWitApi.getWorkItemsBatch).not.toHaveBeenCalled();
+      expect(result.content[0].text).toBe(JSON.stringify([], null, 2));
     });
   });
 

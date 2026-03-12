@@ -16,7 +16,39 @@ const Test_Plan_Tools = {
   list_test_plans: "testplan_list_test_plans",
   list_test_suites: "testplan_list_test_suites",
   create_test_suite: "testplan_create_test_suite",
+  list_test_case_steps_by_batch: "testplan_list_test_case_steps_by_batch",
 };
+
+function extractTestCaseWorkItemId(testCase: { workItem?: { id?: number; workItemFields?: Record<string, unknown>[] } }): number | undefined {
+  if (typeof testCase.workItem?.id === "number") {
+    return testCase.workItem.id;
+  }
+
+  for (const field of testCase.workItem?.workItemFields ?? []) {
+    for (const value of Object.values(field)) {
+      if (typeof value === "number") {
+        return value;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function selectWorkItemFields(workItem: { id?: number; fields?: Record<string, unknown> }, requestedFields: string[]): { id?: number; fields: Record<string, unknown> } {
+  const selectedFields: Record<string, unknown> = {};
+
+  for (const fieldName of requestedFields) {
+    if (fieldName in (workItem.fields ?? {})) {
+      selectedFields[fieldName] = workItem.fields?.[fieldName];
+    }
+  }
+
+  return {
+    id: workItem.id ?? (typeof workItem.fields?.["System.Id"] === "number" ? (workItem.fields["System.Id"] as number) : undefined),
+    fields: selectedFields,
+  };
+}
 
 function configureTestPlanTools(server: McpServer, _: () => Promise<string>, connectionProvider: () => Promise<WebApi>) {
   server.tool(
@@ -441,6 +473,67 @@ function configureTestPlanTools(server: McpServer, _: () => Promise<string>, con
         const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
         return {
           content: [{ type: "text", text: `Error listing test suites: ${errorMessage}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    Test_Plan_Tools.list_test_case_steps_by_batch,
+    "Retrieve test case steps for multiple suites in a batch. For each suite, fetches test cases then retrieves their full work item details (including steps) in a single batch call.",
+    {
+      project: z.string().describe("The unique identifier (ID or name) of the Azure DevOps project."),
+      planId: z.number().describe("The ID of the test plan."),
+      suiteIds: z.array(z.number()).describe("The IDs of the test suites to retrieve test case steps from."),
+      fields: z.array(z.string()).optional().describe("Optional list of work item fields to include in the response. Defaults to System.Title and Microsoft.VSTS.TCM.Steps."),
+    },
+    async ({ project, planId, suiteIds, fields }) => {
+      try {
+        const connection = await connectionProvider();
+        const testPlanApi = await connection.getTestPlanApi();
+        const workItemApi = await connection.getWorkItemTrackingApi();
+        const requestedFields = fields && fields.length > 0 ? fields : ["System.Title", "Microsoft.VSTS.TCM.Steps"];
+
+        // Fetch test cases for all suites in parallel
+        const testCaseResults = await Promise.all(
+          suiteIds.map(async (suiteId) => {
+            const testCases = await testPlanApi.getTestCaseList(project, planId, suiteId);
+            return { suiteId, testCases };
+          })
+        );
+
+        const workItemIds: number[] = [];
+        for (const { testCases } of testCaseResults) {
+          for (const testCase of testCases ?? []) {
+            const workItemId = extractTestCaseWorkItemId(testCase);
+            if (typeof workItemId === "number") {
+              workItemIds.push(workItemId);
+            }
+          }
+        }
+
+        // Deduplicate IDs
+        const uniqueIds = [...new Set(workItemIds)];
+
+        if (uniqueIds.length === 0) {
+          return {
+            content: [{ type: "text", text: JSON.stringify([], null, 2) }],
+          };
+        }
+
+        // Batch fetch work items with steps and other relevant fields
+        const fieldsToFetch = Array.from(new Set(["System.Id", ...requestedFields]));
+        const workItems = await workItemApi.getWorkItemsBatch({ ids: uniqueIds, fields: fieldsToFetch }, project);
+        const filteredWorkItems = (workItems ?? []).map((workItem) => selectWorkItemFields(workItem, requestedFields));
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(filteredWorkItems, null, 2) }],
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+        return {
+          content: [{ type: "text", text: `Error retrieving test case steps: ${errorMessage}` }],
           isError: true,
         };
       }
