@@ -4,7 +4,6 @@
 
 | Functional Area   | Tool                                                                                                      | Description                                              |
 | ----------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Advanced Security | [mcp_ado_advsec_get_alerts](#mcp_ado_advsec_get_alerts)                                                   | Retrieve Advanced Security alerts for a repository       |
 | Advanced Security | [mcp_ado_advsec_get_alert_details](#mcp_ado_advsec_get_alert_details)                                     | Get detailed information about a specific security alert |
 | Core              | [mcp_ado_core_list_projects](#mcp_ado_core_list_projects)                                                 | List all projects in the organization                    |
 | Core              | [mcp_ado_core_list_project_teams](#mcp_ado_core_list_project_teams)                                       | List teams within a project                              |
@@ -90,13 +89,6 @@
 | Work              | [mcp_ado_work_get_team_settings](#mcp_ado_work_get_team_settings)                                         | Get team settings including default iteration and area   |
 
 ## Advanced Security
-
-### mcp_ado_advsec_get_alerts
-
-Retrieve Advanced Security alerts for a repository.
-
-- **Required**: `project`, `repository`, `confidenceLevels`
-- **Optional**: `alertType`, `continuationToken`, `onlyDefaultBranch`, `orderBy`, `ref`, `ruleId`, `ruleName`, `severities`, `states`, `toolName`, `top`, `validity`
 
 ### mcp_ado_advsec_get_alert_details
 
